@@ -1,101 +1,47 @@
 import 'package:flutter/material.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import '../../data/models/task_model.dart';
-import '../../data/repositories/task_repository.dart';
-import '../services/db_helper.dart';
+import '../../domain/use_cases/add_task_use_case.dart';
+import '../../domain/use_cases/get_tasks_use_case.dart';
+import '../../domain/use_cases/delete_task_use_case.dart';
+import '../../domain/use_cases/update_task_use_case.dart';
+import '../../domain/entities/task.dart';
 
 class TaskProvider with ChangeNotifier {
-  final TaskRepository _taskRepository = TaskRepository();
-  List<TaskModel> _tasks = [];
-  bool _isOnline = false;
+  final GetTasksUseCase _getTasksUseCase;
+  final AddTaskUseCase _addTaskUseCase;
+  final DeleteTaskUseCase _deleteTaskUseCase;
+  final UpdateTaskUseCase _updateTaskUseCase;
+  
+  List<Task> _tasks = [];
+  List<Task> get tasks => _tasks;
 
-  List<TaskModel> get tasks => _tasks;
-  bool get isOnline => _isOnline;
-
-  TaskProvider() {
-    _checkConnectivity();
-  }
-
-  void _checkConnectivity() {
-    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
-      _isOnline = result != ConnectivityResult.none;
-      notifyListeners();
-      if (_isOnline) {
-        synchronizeTasks();
-      }
-    });
+  TaskProvider(this._getTasksUseCase, this._addTaskUseCase, this._deleteTaskUseCase, this._updateTaskUseCase) {
+    loadTasks();
   }
 
   void loadTasks() async {
-    if (_isOnline) {
-      _tasks = await _taskRepository.getTasks();
-      notifyListeners();
-    } else {
-      // Manejar lógica para cuando no hay conexión
-      _tasks = []; // O cargar tareas desde una caché local si es necesario
-      notifyListeners();
-    }
+    _tasks = await _getTasksUseCase.call();
+    notifyListeners();
   }
 
   void addTask(String title, String description) async {
-    if (_isOnline) {
-      TaskModel task = await _taskRepository.addTask(title, description);
-      _tasks.add(task);
-    } else {
-      final db = await DBHelper.database;
-      db.insert('pending_tasks', {
-        'title': title,
-        'description': description,
-        'action': 'add'
-      });
-    }
+    Task task = await _addTaskUseCase.call(Task(id: '', title: title, description: description));
+    _tasks.add(task);
     notifyListeners();
   }
 
   void deleteTask(String id) async {
-    if (_isOnline) {
-      await _taskRepository.deleteTask(id);
-      _tasks.removeWhere((task) => task.id == id);
-    } else {
-      final db = await DBHelper.database;
-      db.insert('pending_tasks', {
-        'id': id,
-        'action': 'delete'
-      });
-    }
+    await _deleteTaskUseCase.call(id);
+    _tasks.removeWhere((task) => task.id == id);
     notifyListeners();
   }
 
   void updateTask(String id, String title, String description) async {
-    if (_isOnline) {
-      await _taskRepository.updateTask(id, title, description);
-      int index = _tasks.indexWhere((task) => task.id == id);
-      _tasks[index] = TaskModel(id: id, title: title, description: description);
-    } else {
-      final db = await DBHelper.database;
-      db.insert('pending_tasks', {
-        'id': id,
-        'title': title,
-        'description': description,
-        'action': 'update'
-      });
-    }
-    notifyListeners();
-  }
-
-    Future<void> synchronizeTasks() async {
-    final db = await DBHelper.database;
-    List<Map<String, dynamic>> pendingTasks = await db.query('pending_tasks');
-
-    for (var task in pendingTasks) {
-      if (task['action'] == 'add') {
-        addTask(task['title'], task['description']);
-      } else if (task['action'] == 'delete') {
-        deleteTask(task['id'].toString());
-      } else if (task['action'] == 'update') {
-        updateTask(task['id'].toString(), task['title'], task['description']);
-      }
-      await db.delete('pending_tasks', where: 'id = ?', whereArgs: [task['id']]);
+    Task updatedTask = Task(id: id, title: title, description: description);
+    await _updateTaskUseCase.call(updatedTask);
+    int index = _tasks.indexWhere((task) => task.id == id);
+    if (index != -1) {
+      _tasks[index] = updatedTask;
+      notifyListeners();
     }
   }
 }
